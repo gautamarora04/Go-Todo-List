@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -27,11 +26,12 @@ const (
 
 type (
 	todoModel struct {
-		ID        bson.ObjectId `bson:"_id, omitempty"`
+		ID        bson.ObjectId `bson:"_id,omitempty"`
 		Title     string        `bson:"title"`
 		Completed bool          `bson:"completed"`
-		CreatedAt time.Time     `bson:"createdAt"`
+		CreatedAt time.Time     `bson:"createAt"`
 	}
+
 	todo struct {
 		ID        string    `json:"id"`
 		Title     string    `json:"title"`
@@ -54,13 +54,13 @@ func init() {
 	db = session.DB(dbname)
 }
 
-func homehandler(w http.ResponseWriter, r *http.Request) {
+func homeHandler(w http.ResponseWriter, r *http.Request) {
 	if err := rnd.Template(w, http.StatusOK, []string{"static/home.tpl"}, nil); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func fetchtodos(w http.ResponseWriter, r *http.Request) {
+func fetchTodos(w http.ResponseWriter, r *http.Request) {
 	todos := []todoModel{}
 	if err := db.C(collectionName).Find(bson.M{}).All(&todos); err != nil {
 		rnd.JSON(w, http.StatusProcessing, renderer.M{
@@ -80,15 +80,46 @@ func fetchtodos(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	rnd.JSON(w, http.StatusOK, renderer.M{
-		"Todolist": todolist,
+		"data": todolist,
 	})
 
 }
 
-func createtodos(w http.ResponseWriter, r *http.Request) {
+// func fetchTodos(w http.ResponseWriter, r *http.Request) {
+// 	todos := []todoModel{}
+
+// 	if err := db.C(collectionName).
+// 		Find(bson.M{}).
+// 		All(&todos); err != nil {
+// 		rnd.JSON(w, http.StatusProcessing, renderer.M{
+// 			"message": "Failed to fetch todo",
+// 			"error":   err,
+// 		})
+// 		return
+// 	}
+
+// 	todoList := []todo{}
+// 	for _, t := range todos {
+// 		todoList = append(todoList, todo{
+// 			ID:        t.ID.Hex(),
+// 			Title:     t.Title,
+// 			Completed: t.Completed,
+// 			CreatedAt: t.CreatedAt,
+// 		})
+// 	}
+
+// 	rnd.JSON(w, http.StatusOK, renderer.M{
+// 		"data": todoList,
+// 	})
+// }
+
+func createTodo(w http.ResponseWriter, r *http.Request) {
 	var data todo
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
-		rnd.JSON(w, http.StatusProcessing, err)
+		rnd.JSON(w, http.StatusProcessing, renderer.M{
+			"message": "Error while creating",
+			"error":   err,
+		})
 		return
 	}
 	if data.Title == "" {
@@ -104,7 +135,10 @@ func createtodos(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 	if err := db.C(collectionName).Insert(&datamodel); err != nil {
-		rnd.JSON(w, http.StatusBadRequest, err)
+		rnd.JSON(w, http.StatusProcessing, renderer.M{
+			"message": "Failed to save todo",
+			"error":   err,
+		})
 		return
 	}
 	rnd.JSON(w, http.StatusOK, renderer.M{
@@ -113,7 +147,7 @@ func createtodos(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func deletetodos(w http.ResponseWriter, r *http.Request) {
+func deleteTodo(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 
 	if bson.IsObjectIdHex(id) == false {
@@ -123,7 +157,7 @@ func deletetodos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.C(collectionName).RemoveId(id); err != nil {
+	if err := db.C(collectionName).RemoveId(bson.ObjectIdHex(id)); err != nil {
 		rnd.JSON(w, http.StatusProcessing, renderer.M{
 			"message": "Failed to delete Todo",
 		})
@@ -135,13 +169,14 @@ func deletetodos(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func updatetodos(w http.ResponseWriter, r *http.Request) {
+func updateTodo(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(chi.URLParam(r, "id"))
 
 	if bson.IsObjectIdHex(id) == false {
 		rnd.JSON(w, http.StatusBadRequest, renderer.M{
 			"message": "ID not valid!!",
 		})
+		return
 	}
 
 	var data todo
@@ -162,33 +197,35 @@ func updatetodos(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func todohandlers() http.Handler {
-	rg := chi.NewRouter() // new group router
+func todoHandlers() http.Handler {
+	rg := chi.NewRouter()
 	rg.Group(func(r chi.Router) {
-		r.Get("/", fetchtodos)
-		r.Post("/", createtodos)
-		r.Put("/{id}", updatetodos)
-		r.Delete("/{id}", deletetodos)
+		r.Get("/", fetchTodos)
+		r.Post("/", createTodo)
+		r.Put("/{id}", updateTodo)
+		r.Delete("/{id}", deleteTodo)
 	})
 	return rg
 }
-
 func main() {
+
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
-	r.Get("/", homehandler)
-	r.Mount("/todo", todohandlers())
+	r.Get("/", homeHandler)
 
-	server := &http.Server{
+	r.Mount("/todo", todoHandlers())
+
+	srv := &http.Server{
 		Addr:         port,
 		Handler:      r,
-		ReadTimeout:  time.Minute,
-		WriteTimeout: time.Minute,
-		IdleTimeout:  time.Minute,
+		ReadTimeout:  60 * time.Second,
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
-	fmt.Println("Starting the server on the port: ", port)
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Println("Server Error", err)
+
+	log.Println("Listening on port ", port)
+	if err := srv.ListenAndServe(); err != nil {
+		log.Printf("listen: %s\n", err)
 	}
 
 }
